@@ -1,0 +1,36 @@
+{
+  "name": "@saas/workers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/client": "7.0.0",
+    "@saas/shared": "workspace:*",
+    "bullmq": "5.34.0",
+    "ioredis": "5.4.2",
+    "pino": "9.6.0",
+    "zod": "4.0.0",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "0.55.0",
+    "@opentelemetry/sdk-node": "0.57.0",
+    "@opentelemetry/instrumentation-pino": "0.46.0",
+    "pino-opentelemetry-transport": "1.0.1",
+    "resend": "4.1.1",
+    "@react-email/render": "1.0.4"
+  },
+  "devDependencies": {
+    "@saas/config": "workspace:*",
+    "@types/node": "22.10.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vitest": "3.0.0"
+  }
+}
