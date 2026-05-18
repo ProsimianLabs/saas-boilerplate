@@ -586,6 +586,7 @@ These are third-party services we recommend wiring up to a production SaaS but *
 | **Google Search Console** | SEO indexing + crawl monitoring | DNS TXT verification (via Tofu) or HTML meta tag; sitemap submission from `apps/marketing/` | Verification is per-domain, not portable; sitemap content depends on user's marketing site. |
 | **Intercom** | Customer support chat | JS snippet in `apps/web/` (auth'd users) and `apps/marketing/` (anon); user identification via Intercom JS API with `apps/api/` providing the user attributes | Vendor lock-in + cost; many users prefer Crisp, Chatwoot, Plain, or Zendesk. |
 | **Sentry** | Error monitoring / crash reporting | `@sentry/node` SDK in `apps/api/` + `apps/workers/`; `@sentry/react` in `apps/web/`; source map upload in CI | Source-available (FSL) for server, MIT for SDKs (see §15 license trade-offs). Some users prefer Honeycomb, Datadog, or self-hosted GlitchTip. |
+| **Docuseal** | Document signing (e-signature) | API integration in `apps/api/` for template send + submission tracking; webhook handler for signed/declined events; optional embed in `apps/web/` | Account-specific (templates, branding, signers). Some users prefer DocuSign or HelloSign / Dropbox Sign; some self-host Docuseal (separate infra concern). |
 
 ### What ships now per tool
 For each tool: a `docs/integrations/<tool>.md` setup guide describing:
@@ -605,6 +606,12 @@ The recommended pattern is:
 ### Cal.com-specific notes
 - For a hosted Cal.com setup, the embed snippet is a one-liner. For self-hosted Cal.com on your own infra, that's a separate Tofu story (RDS-backed, separate ECS service) — out of scope here.
 - Webhook events (BOOKING_CREATED, RESCHEDULED, CANCELLED, NO_SHOW) flow into `apps/api/src/routes/webhooks-cal.ts` (stub provided); we ship Zod schemas for the payload shapes.
+
+### Docuseal-specific notes
+- Hosted Docuseal (docuseal.com) is the recommended path — bearer-token API + webhook for `submission.created`, `submission.completed`, `submission.declined`.
+- Webhook handler stub in `apps/api/src/routes/webhooks-docuseal.ts`; Zod schemas for payloads in `packages/shared/zod/docuseal-events.ts`.
+- Self-hosting Docuseal is supported but is its own Tofu workload (RDS-backed Rails app on ECS or a dedicated EC2). Documented at high level in `docs/integrations/docuseal.md` but not provided as a module.
+- Common gotcha: webhooks fire multiple times for the same event; idempotency table (same one used for Stripe) handles dedup.
 
 ## 17. Open questions / future work
 
