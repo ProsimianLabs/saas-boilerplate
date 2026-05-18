@@ -369,7 +369,7 @@ The intended adoption arc for a boilerplate user:
 
 1. Clone, run `pnpm dev` against `docker compose up`. Verify locally.
 2. Buy domain. Create Route53 hosted zone. Point registrar nameservers at Route53.
-3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys. On Neon: run the bundled `prisma/init.sql` once per environment to create the two RLS roles (`app_user`, `app_admin`); set `DATABASE_URL` to the `app_user` connection string and `DATABASE_URL_ADMIN` to the `app_admin` one.
+3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys. **Region**: pick Neon and Upstash regions that match your `var.aws_region` — every API request makes at least one DB round-trip, and a cross-region hop adds 60–100ms per query. Neon supports several AWS regions directly; Upstash similar. On Neon: run the bundled `prisma/init.sql` once per environment to create the two RLS roles (`app_user`, `app_admin`); set `DATABASE_URL` to the `app_user` connection string and `DATABASE_URL_ADMIN` to the `app_admin` one.
 4. Set values in `infra/tofu/staging.tfvars` (domain, secrets, AWS region, account id).
 5. `tofu workspace select staging && tofu init && tofu apply` → staging stack stands up at `staging.app.*` and `staging.api.*`. ~10 minutes first time.
 6. Build images via CI (or local `pnpm build:docker`), push to ECR, ECS pulls and rolls.
@@ -416,6 +416,7 @@ Staging is meant to be persistent (not torn down between deploys) but can be des
   - `email-sendgrid.md`, `email-postmark.md`
   - `host-fly.md`, `host-render.md`, `host-railway.md`, `host-cloud-run.md`
 - **`/docs` endpoint in `apps/api/`** — Scalar UI against the generated OpenAPI spec.
+- **`DEFERRED.md`** at repo root — documents what's intentionally not shipped (Stripe billing implementation, landing-page templates) and recommends the [Superpowers Claude Code plugin](https://github.com/obra/superpowers) for development workflows on top of this boilerplate.
 
 ## 15. Out of scope (intentionally)
 
