@@ -1,0 +1,44 @@
+name: Build Images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-images-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & push to ECR
+    runs-on: ubuntu-latest
+    needs: []  # Phase 2: depends on ci.yml via wait-on-check-action
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        app: [api, workers]
+    steps:
+      - uses: actions/checkout@v4
+      # Phase 2:
+      # - uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      #     aws-region: ${{ vars.AWS_REGION }}
+      # - uses: aws-actions/amazon-ecr-login@v2
+      # - name: Build and push
+      #   uses: docker/build-push-action@v6
+      #   with:
+      #     context: .
+      #     file: apps/${{ matrix.app }}/Dockerfile
+      #     push: true
+      #     tags: |
+      #       ${{ steps.ecr.outputs.registry }}/${{ matrix.app }}:${{ github.sha }}
+      #       ${{ steps.ecr.outputs.registry }}/${{ matrix.app }}:latest-main
+      #     cache-from: type=registry,ref=${{ steps.ecr.outputs.registry }}/${{ matrix.app }}:latest-main
+      #     cache-to: type=inline
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: workflow structure only. Phase 2 enables ECR build+push."

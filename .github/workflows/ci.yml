@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint + Typecheck + Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      # Phase 2 enables these once code lands:
+      # - name: Generate Prisma client
+      #   run: pnpm --filter @saas/api prisma:generate
+      # - name: Lint
+      #   run: pnpm lint
+      # - name: Typecheck
+      #   run: pnpm typecheck
+      # - name: Test
+      #   run: pnpm test
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: only checks pnpm install resolves. Phase 2 wires lint/typecheck/test."

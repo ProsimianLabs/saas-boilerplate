@@ -1,0 +1,29 @@
+name: E2E
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  playwright:
+    name: Playwright vs staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Phase 2:
+      # - run: pnpm install --frozen-lockfile
+      # - run: pnpm --filter @saas/e2e exec playwright install --with-deps
+      # - run: pnpm test:e2e
+      #   env:
+      #     BASE_URL: https://staging.app.${{ vars.DOMAIN_NAME }}
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: structure only."

@@ -1,0 +1,58 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: ["Build Images"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Git SHA to deploy (defaults to latest main)"
+        required: false
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+      # Phase 2:
+      # - uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.AWS_STAGING_ROLE_ARN }}
+      #     aws-region: ${{ vars.AWS_REGION }}
+      # - name: Run migrations as app_admin
+      #   run: |
+      #     DATABASE_URL=$(aws ssm get-parameter --name /saas/staging/db/admin-url --with-decryption --query Parameter.Value --output text)
+      #     DATABASE_URL_ADMIN=$DATABASE_URL pnpm --filter @saas/api prisma:deploy
+      # - name: Update ECS service
+      #   run: |
+      #     aws ecs update-service --cluster saas-staging --service api --force-new-deployment
+      #     aws ecs wait services-stable --cluster saas-staging --services api
+      # - name: Health check loop
+      #   run: ./scripts/healthcheck.sh https://staging.api.${{ vars.DOMAIN_NAME }}
+      # - name: Smoke tests
+      #   run: pnpm --filter @saas/api test:smoke
+      # - name: Record deployed SHA
+      #   run: aws ssm put-parameter --name /saas/staging/last-deployed-sha --value "${{ inputs.sha || github.sha }}" --overwrite
+      # - name: Notify Slack
+      #   uses: ./.github/actions/notify-slack
+      #   with:
+      #     status: ${{ job.status }}
+      #     environment: staging
+      #     sha: ${{ inputs.sha || github.sha }}
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: structure only. Phase 2 enables real deploy + smoke + rollback."

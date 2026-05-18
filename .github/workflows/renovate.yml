@@ -1,0 +1,19 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # hourly
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Renovate
+        uses: renovatebot/github-action@v41.0.4
+        with:
+          configurationFile: renovate.json
+          token: ${{ secrets.RENOVATE_TOKEN }}
+        # Phase 2 note: set RENOVATE_TOKEN secret to a GitHub PAT with `repo` scope.
+        # Or use the hosted Renovate GitHub App instead and disable this workflow.

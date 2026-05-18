@@ -1,0 +1,32 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to roll back"
+        type: choice
+        options: [staging, production]
+        required: true
+
+jobs:
+  rollback:
+    name: Roll back to previous SHA
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # Phase 2:
+      # - name: Get previous SHA
+      #   id: prev
+      #   run: |
+      #     SHA=$(aws ssm get-parameter --name /saas/${{ inputs.environment }}/prev-deployed-sha --query Parameter.Value --output text)
+      #     echo "sha=$SHA" >> $GITHUB_OUTPUT
+      # - name: Update ECS service to previous task definition
+      #   run: ./scripts/rollback.sh ${{ inputs.environment }} ${{ steps.prev.outputs.sha }}
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: structure only."

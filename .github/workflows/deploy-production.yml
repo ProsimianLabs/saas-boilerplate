@@ -1,0 +1,72 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Git SHA to deploy (must have been deployed to staging)"
+        required: true
+      force_deploy:
+        description: "Bypass soak-time gate (use sparingly)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Production gates
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      # Phase 2:
+      # - uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.AWS_PRODUCTION_ROLE_ARN }}
+      #     aws-region: ${{ vars.AWS_REGION }}
+      # - name: Verify SHA deployed to staging
+      #   run: |
+      #     STAGING_SHA=$(aws ssm get-parameter --name /saas/staging/last-deployed-sha --query Parameter.Value --output text)
+      #     if [ "$STAGING_SHA" != "${{ inputs.sha }}" ]; then
+      #       echo "::error::SHA ${{ inputs.sha }} has not been deployed to staging (current staging SHA: $STAGING_SHA)"
+      #       exit 1
+      #     fi
+      # - name: Verify SHA has soaked at least 1 hour in staging
+      #   if: ${{ !inputs.force_deploy }}
+      #   run: |
+      #     DEPLOYED_AT=$(aws ssm get-parameter --name /saas/staging/last-deployed-at --query Parameter.Value --output text)
+      #     # ...compare to (now - 3600)...
+      # - name: Verify CI green at this SHA
+      #   uses: lewagon/wait-on-check-action@v1.3.4
+      #   with:
+      #     ref: ${{ inputs.sha }}
+      #     check-name: "Lint + Typecheck + Test"
+      #     allowed-conclusions: success
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: structure only. Phase 2 wires same-SHA + soak + CI gates."
+
+  deploy:
+    needs: [gate]
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      # Phase 2: identical structure to deploy-staging but production cluster + role
+      - name: Phase 1 placeholder
+        run: |
+          echo "Phase 1: structure only."
