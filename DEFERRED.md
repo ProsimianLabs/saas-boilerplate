@@ -74,6 +74,18 @@ We strongly recommend using the **[Superpowers Claude Code plugin](https://githu
 
 **Why this lives in a skill, not the boilerplate:** legal docs change as data collection changes. A skill can re-run after every meaningful schema change and diff the output, keeping policies current. Static templates rot.
 
+## Phase 1 known issues
+
+Caveats observed during Phase 1 build. None block the boilerplate from being useful as a reference; all should be cleaned up before (or shortly after) tagging v0.2.
+
+- **AGENTS.md uses present tense for Phase 2 files.** Convention bullets reference paths like `apps/api/src/app.ts`, `apps/api/src/server.ts`, `packages/shared/src/db.ts`, `packages/shared/src/env.ts`, `packages/shared/src/slack.ts` as if they exist today. They don't — they land in Phase 2. An agent that reads AGENTS.md and tries to locate those files will come up empty. Soften the phrasing to "Phase 2 will place this at…" in the next pass.
+- **GitHub Actions YAML uses block scalars for echo statements.** Workflows under `.github/workflows/` that have placeholder steps like `run: echo "Phase 1: ..."` were written as block scalars (`run: |` then the command on a new line) instead of flow scalars, because an unquoted colon inside a double-quoted YAML value is a parse error under strict YAML 1.2. Functionally identical to a flow scalar; mention here so nobody "fixes" them back.
+- **Peer-dependency warnings on first `pnpm install`.** Install resolves cleanly but emits three warnings worth knowing about:
+  - `better-auth@1.2.0` bundles `zod@3.x` via its `better-call` sub-dependency, even though we depend on `zod@4.x` at the workspace level. Upstream issue; will clear when BetterAuth ships zod-4-compatible internals.
+  - `@astrojs/tailwind@5.1.4` declares a peer on `tailwindcss@^3.0.24`; we ship Tailwind 4.1.4. Astro's Tailwind integration for v4 is a separate package — swap when stable.
+  - `@vitejs/plugin-react@4.3.4` lists peers `vite@^4 || ^5 || ^6`; we ship Vite 8. Plugin works; peer list just hasn't been bumped upstream.
+- **`pnpm install` skips build scripts for native/binary packages.** First install logs that build scripts were ignored for `@prisma/engines`, `cpu-features`, `esbuild`, `prisma`, `protobufjs`, `sharp`, `ssh2`. This is pnpm 10's default-deny posture for postinstall scripts. Phase 2 will add these to `pnpm.onlyBuiltDependencies` in the root `package.json` once we've confirmed each one is needed.
+
 ## Other future work (unscheduled)
 
 - **Stripe webhook idempotency example** (see above).
