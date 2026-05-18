@@ -1,0 +1,9 @@
+{
+  "extends": "@saas/config/tsconfig/node",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["dist", "node_modules"]
+}
