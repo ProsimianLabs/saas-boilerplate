@@ -9,8 +9,8 @@ Things this boilerplate intentionally does **not** ship yet, with notes on when/
 **Why deferred:** Pricing models vary too widely for a single bundled implementation to be useful: flat subscription, tiered subscription, usage-based metering, seat-based, hybrid free + paid, one-time payment, marketplace pass-through. Each requires materially different data models, webhook handlers, reconciliation logic, and admin tooling.
 
 **What ships now:**
-- `.env.example` entries for `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` (commented).
-- `docs/integrations/stripe.md` — setup guide covering webhook signature verification, idempotency patterns, common pitfalls, and links to Stripe's Node SDK reference.
+- `.env.example` entries for `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` (commented), with a header comment reminding that **staging environments must use Stripe sandbox/test credentials (`sk_test_…`), never live keys (`sk_live_…`)**. Live keys belong only in `production.tfvars`. A misplaced live key will charge real cards during testing — and Stripe webhooks fired at staging with live secrets will move real money.
+- `docs/integrations/stripe.md` — setup guide covering webhook signature verification, idempotency patterns, common pitfalls (including the live/test key separation), and links to Stripe's Node SDK reference.
 - `packages/shared/zod/stripe-events.ts` — Zod stubs for common webhook event shapes (opt-in per event you handle).
 
 **What will be added later:** a *minimal* example webhook handler that does signature verification, idempotent processing via a `processed_webhook_events` table, and a dispatch table — without committing to a specific billing model. That pattern is universal and useful regardless of how you price.
