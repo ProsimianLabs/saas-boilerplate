@@ -19,6 +19,33 @@ Primary audience: solo founders, small teams, agencies starting new SaaS project
 - **Pin everything.** Exact versions; Renovate manages updates.
 - **Boilerplate cost = $0–150/month per env**, not $500. Managed-everywhere defaults (Neon, Upstash, Resend).
 - **Standard tools over clever ones.** Vitest, Playwright, OpenTofu, Pino. Reach for boring choices.
+- **America-first**, not Europe-first. CCPA/CAN-SPAM compliance is built in (universal best practice anyway), but GDPR-specific features (data-export endpoints, granular DSAR tooling, EU-specific cookie consent variants) are deferred. Users targeting EU explicitly can add them.
+
+## 2.1 Deliverable phasing
+
+The repo evolves in three phases. Each phase is independently shippable and useful.
+
+**Phase 1 — Documentation + structure (now):**
+- Full directory tree scaffolded; every directory has a `README.md` explaining what goes there and what conventions apply.
+- All `package.json` files committed with **pinned dependency versions** — `pnpm install` resolves but no application code runs because there isn't any yet.
+- Config files committed: `turbo.json`, `pnpm-workspace.yaml`, `renovate.json`, `tsconfig` presets, ESLint flat config, Prettier, Tailwind preset, Vitest config skeleton.
+- Tofu modules: directory structure + `.tf` files with variable/output declarations + comment-block docs explaining what each module would create (no actual resources yet).
+- This spec doc + DEFERRED.md + per-section operational guides under `docs/`.
+- An **`AGENTS.md`** at repo root: a flat, agent-readable summary of the architecture optimized for AI coding agents to ingest (Claude, Cursor, Aider, etc.). Sister doc to `README.md`. Cross-links into the full spec.
+
+**Phase 2 — Working skeleton (next):**
+- Same structure, now boots. `pnpm install && pnpm dev` brings up Postgres + Redis + API + workers + web + marketing locally.
+- Hello-World endpoints, working signup/login flow, one trivial CRUD example with RLS, working OpenAPI → client generation, working Astro page, working Tofu apply that stands up an empty service.
+- CI green. Smoke tests pass.
+
+**Phase 3 — Reference implementation features (later, optional):**
+- Real BullMQ worker example with retry/DLQ patterns.
+- Real Stripe webhook handler skeleton.
+- Real admin endpoints with role checks.
+- E2E coverage of golden paths.
+
+**Possible Phase 1.5 — Claude skill (`saas-boilerplate-scaffold`):**
+A separate Claude Code skill that, given a new project name + target region + chosen integrations, generates a fresh repo with the boilerplate structure pre-populated and connection strings wired. Lets users skip the "clone + sed + customize" tax. Lives in its own repo, references this one. Decision deferred — easier to evaluate once Phase 1 is concrete.
 
 ## 3. Repo layout (Turborepo + pnpm workspaces)
 
@@ -117,6 +144,60 @@ model User {
 - **Per-email-type granular preferences** (newsletter vs product updates vs marketing) — deferred; current model is binary opt-in. Easy to extend later by adding fields or a separate `EmailPreference` table.
 
 Unsubscribe link in every marketing email points to `app.<domain>/settings/email-preferences`, which writes `marketingEmailConsent = false`. One-click unsubscribe (RFC 8058 `List-Unsubscribe` header) supported via Resend.
+
+### Email templates: React Email
+
+Templates live in `packages/shared/email-templates/` as React components rendered by **`@react-email/components`**. Resend renders them natively — `resend.emails.send({ react: <WelcomeEmail name={user.name} /> })` — no intermediate HTML generation step.
+
+**Bundled templates** (Phase 2; Phase 1 ships docs + dependency only):
+- `WelcomeEmail` — sent on signup, links to onboarding
+- `PasswordResetEmail` — BetterAuth-triggered
+- `MagicLinkEmail` — BetterAuth-triggered (if magic-link auth enabled)
+- `OrgInvitationEmail` — BetterAuth org plugin invitation
+- `EmailVerificationEmail` — initial email verification
+
+All templates extend a shared `<EmailLayout>` with the company logo (SVG → PNG fallback for email-client compatibility), brand colors via CSS variables, and footer with required physical address (CAN-SPAM requirement) + unsubscribe link.
+
+**Why React Email over MJML**:
+- TypeScript-native (no `@types/mjml` shenanigans)
+- Hot reload in dev via `pnpm email:dev` (browser preview at `localhost:3000`)
+- Components compose like normal React (e.g., share `<BrandButton>` between web app and emails)
+- Native Resend integration (one less render step)
+- Same mental model as `apps/web/` — no second template language to learn
+
+MJML is also fine if you prefer it (callsaver uses MJML+SendGrid+nodemailer successfully). Swap guide: `docs/swap-guides/email-mjml.md`.
+
+### File uploads (Phase 2 implementation; docs in Phase 1)
+
+Pattern: **S3 presigned URLs**, never proxy bytes through the API. Keeps the API stateless, scales to large files, no buffer/disk concerns.
+
+**Flow:**
+1. Frontend requests upload: `POST /uploads { filename, contentType, size }`.
+2. API validates (size limit, content-type allowlist, rate limit per user), generates presigned PUT URL via `@aws-sdk/s3-request-presigner`, returns `{ uploadUrl, fileKey, expiresAt }`.
+3. Frontend uploads directly to S3 with the presigned URL.
+4. Frontend confirms upload: `POST /uploads/:key/confirm`.
+5. API verifies the object exists in S3 (HEAD request), creates a row in the `Upload` table linked to the user and (if applicable) the entity it's attached to.
+6. For private files, downloads also go through presigned GET URLs (short TTL, scoped to user).
+
+**Bucket structure** (one S3 bucket per env):
+```
+<bucket>/uploads/<organizationId>/<userId>/<uploadId>-<filename>
+```
+Object prefix includes `organizationId` so RLS-equivalent guarantees apply at the IAM-policy level (IAM policy can restrict the per-task role to objects with the org prefix — defense in depth).
+
+**Bundled pieces** (Phase 2):
+- `apps/api/src/routes/uploads.ts` — presigned URL endpoint + confirm endpoint
+- `packages/shared/zod/upload.ts` — request/response schemas
+- `packages/api-client` — auto-generated client + hook
+- `apps/web/src/hooks/useUpload.ts` — React hook handling the 4-step flow + progress
+- Tofu `s3-uploads` module — bucket + lifecycle (auto-expire abandoned uploads after 24h) + CORS config + IAM policy
+
+**Not bundled** (deferred / user choice):
+- Image processing / thumbnails (Sharp on a Lambda? Cloudflare Images? Imgproxy?) — varies too much per product
+- Antivirus scanning (ClamAV? AWS GuardDuty Malware Protection?) — needed for user-generated content with social features, not for internal docs
+- Direct integration with Docuseal / other doc-handling services
+
+`docs/integrations/file-uploads.md` ships in Phase 1 with the architecture diagram and code skeleton.
 
 ### Multi-tenancy
 
@@ -698,6 +779,11 @@ These are the pinned versions as of design date (Renovate will track updates):
 | zod | 4.x |
 | @hookform/resolvers | latest |
 | react-hook-form | 7.x |
+| @react-email/components | latest |
+| @react-email/render | latest |
+| @aws-sdk/client-s3 | 3.x |
+| @aws-sdk/s3-request-presigner | 3.x |
+| vanilla-cookieconsent (orestbida) | 3.x |
 | samchungy/zod-openapi | 5.x |
 | @hey-api/openapi-ts | latest |
 | better-auth | latest |
