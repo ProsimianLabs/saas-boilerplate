@@ -1,0 +1,11 @@
+project_name              = "saas"
+environment               = "production"
+aws_region                = "us-east-1"
+aws_account_id            = "000000000000"
+domain_name               = "yourdomain.com"
+env_prefix                = ""
+monthly_budget_usd        = 300
+budget_email_subscribers  = ["you@yourdomain.com", "ops@yourdomain.com"]
+api_task_count            = 2
+workers_task_count        = 2
+production_auto_deploy    = false

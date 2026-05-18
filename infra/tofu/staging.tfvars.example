@@ -1,0 +1,11 @@
+project_name              = "saas"
+environment               = "staging"
+aws_region                = "us-east-1"
+aws_account_id            = "000000000000"
+domain_name               = "yourdomain.com"
+env_prefix                = "staging."
+monthly_budget_usd        = 100
+budget_email_subscribers  = ["you@yourdomain.com"]
+api_task_count            = 1
+workers_task_count        = 1
+staging_auto_deploy       = true
