@@ -94,39 +94,77 @@ All problem-type schemas are themselves Zod schemas, registered with the OpenAPI
 BetterAuth handles sessions, OAuth flows, email/password. Direct integration — **not** wrapped by Neon Auth (which is beta and adds vendor coupling). If a user wants Neon Auth specifically, swap guide in `docs/swap-guides/neon-auth.md`.
 
 ### Multi-tenancy
+
 BetterAuth's [organization plugin](https://better-auth.com/docs/plugins/organization) enabled by default. Provides `organization`, `member`, `invitation`, `team`, `organizationRole` tables and roles (owner/admin/member, extensible). Session carries `activeOrganizationId` and `activeTeamId`.
 
-**Critical**: the plugin manages membership and roles but does NOT auto-scope your application data. The boilerplate adds four pieces on top:
+**Enforcement mechanism: Postgres Row-Level Security (RLS).** The plugin manages membership and roles but does NOT auto-scope your application data. The boilerplate uses RLS — the DB itself rejects any query that would cross orgs, regardless of application code. This is the same model Supabase uses, and is the gold standard for multi-tenant SaaS data isolation.
 
-1. **`organizationId` on every domain table.** Migration template + Prisma model template; convention enforced via an ESLint rule (`require-organization-id-on-models`) in `packages/config/`.
+#### Pieces
 
-2. **AsyncLocalStorage middleware in `apps/api/`** reads `req.session.activeOrganizationId` per request, stores it in an ALS context for the lifetime of the request.
+1. **`organizationId UUID NOT NULL` on every domain table.** Indexed. Migration template enforces this; an ESLint/SQL-lint check fails CI for any new migration that adds a domain table without `organization_id` + an index.
 
-3. **Scoped Prisma client in `packages/shared/db.ts`** (~50 lines, users own it):
+2. **RLS policies, defined in custom SQL migrations** (Prisma supports custom SQL alongside schema migrations):
+   ```sql
+   -- prisma/migrations/<ts>_enable_rls_invoice/migration.sql
+   ALTER TABLE "Invoice" ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY org_isolation ON "Invoice"
+     USING ("organizationId" = current_setting('app.current_org', true)::uuid)
+     WITH CHECK ("organizationId" = current_setting('app.current_org', true)::uuid);
+   ```
+   A scaffolding script `pnpm db:add-rls <ModelName>` generates these migrations consistently. Missing RLS on a domain table = CI fails.
+
+3. **Two database roles** provisioned at infrastructure level:
+   - `app_user` — normal application role, RLS applies. Used by the API and workers.
+   - `app_admin` — `BYPASSRLS` role. Used only by (a) Prisma migrations and (b) explicitly-scoped admin endpoints. Separate `DATABASE_URL_ADMIN` env var, never exposed to handler code outside admin context.
+
+4. **Connection setup** — `apps/api/` uses two Prisma clients:
+   - `prisma` (default) — connects as `app_user`, RLS active.
+   - `prismaAdmin` — connects as `app_admin`, RLS bypassed. Use sparingly.
+
+5. **Per-request session variable.** AsyncLocalStorage middleware reads `req.session.activeOrganizationId`. A `$extends` wrapper on `prisma` wraps each operation in a short transaction and runs `SET LOCAL app.current_org = '<uuid>'` first:
    ```ts
-   export const scopedPrisma = prisma.$extends({
+   // packages/shared/db.ts (~60 lines, users own it)
+   const orgContext = new AsyncLocalStorage<string>();
+   const _prisma = new PrismaClient();
+
+   export const prisma = _prisma.$extends({
      query: {
        $allModels: {
          async $allOperations({ model, operation, args, query }) {
-           const orgId = orgContext.getStore();  // from ALS
-           if (orgId && SCOPED_MODELS.has(model)) {
-             args.where = { ...args.where, organizationId: orgId };
-           }
-           return query(args);
+           const orgId = orgContext.getStore();
+           if (!orgId) return query(args); // unscoped / bootstrap context
+           return _prisma.$transaction(async (tx) => {
+             await tx.$executeRawUnsafe(`SET LOCAL app.current_org = '${orgId}'`);
+             return (tx as any)[model][operation](args);
+           });
          },
        },
      },
    });
+
+   export function runInOrgContext<T>(orgId: string, fn: () => Promise<T>) {
+     return orgContext.run(orgId, fn);
+   }
    ```
-   Handlers import `scopedPrisma` and don't think about org scoping. The set of `SCOPED_MODELS` is explicit; opt-in per model.
+   The wrapper exists *only* to inject the session variable — Postgres does the actual filtering. If the wrapper is wrong, RLS still protects you (queries fail closed: `current_setting('app.current_org', true)` returns NULL → policy matches nothing → empty result).
 
-4. **Escape hatch**: `getUnscopedPrisma()` for admin endpoints / cross-org operations. Marked dangerous; gated by a role check + audit log.
+6. **Workers** include `organizationId` in every job payload (Zod-validated). Worker bootstrap wraps the handler in `runInOrgContext(payload.organizationId, () => processor(payload))`.
 
-**Workers** include `organizationId` in every job payload (validated via Zod). The worker sets ALS context before processing each job, so `scopedPrisma` works the same way as in API handlers.
+7. **Frontend** (`apps/web/`) provides `useActiveOrg()` hook backed by BetterAuth session; org switcher in layout calls `organization.setActive(orgId)`.
 
-**Frontend** (`apps/web/`) provides `useActiveOrg()` hook backed by BetterAuth session, plus an org switcher in the layout (calls `organization.setActive(orgId)`).
+8. **Tests.** Testcontainers Postgres bootstrap creates both roles. Test setup wraps each test in `runInOrgContext(testOrgId, ...)`. Cross-org leak detection: at least one canary test per scoped model asserts that querying with the wrong org returns empty.
 
-**Invitation email**: implemented via Resend, template in `packages/shared/email-templates/`.
+9. **Invitation email** via Resend, template in `packages/shared/email-templates/`.
+
+#### Trade-offs (documented honestly in README)
+- **Every scoped query becomes a 1-statement transaction** to make `SET LOCAL` work with connection pooling. Overhead is small (single round-trip), but it's not free. For high-throughput read paths, batch into explicit `$transaction()` blocks.
+- **Migrations run as `app_admin`** because they need to ALTER tables (which RLS would block). Prisma's `DATABASE_URL` for migrate commands uses the admin connection.
+- **New models require both Prisma schema *and* RLS policy migration.** The `pnpm db:add-model` scaffolding script does both atomically; the CI lint enforces it.
+- **BetterAuth's own tables** (`organization`, `member`, `invitation`, etc.) need RLS policies too — boilerplate ships these out of the box (e.g., a user can only see members of orgs they belong to).
+- **Easier audit posture** — for SOC 2, the auditor evaluates DB-enforced isolation as substantially stronger than application-enforced. This pays for the small ergonomic cost.
+
+#### Swap guide
+`docs/swap-guides/multi-tenancy-app-layer.md` documents the alternative (application-layer wrapper that injects `where: { organizationId }` instead of using RLS) for teams who want simpler ops at the cost of weaker guarantees.
 
 ## 5. Workers — `apps/workers/`
 
@@ -323,7 +361,7 @@ The intended adoption arc for a boilerplate user:
 
 1. Clone, run `pnpm dev` against `docker compose up`. Verify locally.
 2. Buy domain. Create Route53 hosted zone. Point registrar nameservers at Route53.
-3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys.
+3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys. On Neon: run the bundled `prisma/init.sql` once per environment to create the two RLS roles (`app_user`, `app_admin`); set `DATABASE_URL` to the `app_user` connection string and `DATABASE_URL_ADMIN` to the `app_admin` one.
 4. Set values in `infra/tofu/staging.tfvars` (domain, secrets, AWS region, account id).
 5. `tofu workspace select staging && tofu init && tofu apply` → staging stack stands up at `staging.app.*` and `staging.api.*`. ~10 minutes first time.
 6. Build images via CI (or local `pnpm build:docker`), push to ECR, ECS pulls and rolls.
