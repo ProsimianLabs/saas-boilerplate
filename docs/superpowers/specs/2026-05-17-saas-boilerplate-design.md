@@ -327,7 +327,7 @@ Turbo runs:
 | `logs` | CloudWatch log groups + retention + alarms. |
 | `marketing` | S3 bucket + CloudFront distribution + Route53 record for static Astro build (served at apex domain). |
 | `web` | S3 bucket + CloudFront distribution + Route53 record for static Vite SPA build (served at `app.<domain>` / `staging.app.<domain>`). |
-| `acm` | ACM certs: one in `us-east-1` for CloudFront (apex + `app.*` + `staging.app.*`), one in deploy region for ALB (`api.*` + `staging.api.*`). Default uses wildcard `*.<domain>` + `<domain>` to cover everything. |
+| `acm` | ACM certs: one in **`us-east-1`** for CloudFront (apex + `app.*` + `staging.app.*`) — this region is **required** by CloudFront, not configurable. Plus one in the user's chosen deploy region for ALB (`api.*` + `staging.api.*`). Default uses wildcard `*.<domain>` + `<domain>` to cover everything. Implemented via a second AWS provider alias `aws.us_east_1` in the Tofu root module. |
 
 ### What's NOT included
 - **No RDS** (use Neon for managed Postgres)
@@ -335,6 +335,14 @@ Turbo runs:
 - **No NAT Gateway**. Rationale: NAT exists to let *private-subnet* resources reach the internet. We use public subnets with tight security groups instead — ECS tasks only allow inbound from the ALB security group, outbound goes directly via IGW. Trade-off: less defense-in-depth than canonical AWS architecture (SG is the only barrier); cost of public IPv4 (~$3.65/mo per task, ~$14/mo total) versus ~$65/mo for HA NAT Gateways. Users who need stricter network isolation: see `docs/swap-guides/aws-with-nat-gateway.md`.
 - **No CDK / Pulumi** (OpenTofu only; alternatives in swap guides as text only)
 - **No Multi-AZ DB / cross-region replication** (managed by Neon/Upstash; users with those needs override `tofu` variables)
+
+### Region selection
+
+User-configurable via `var.aws_region` in `infra/tofu/<env>.tfvars`. Defaults to `us-east-1` for new projects (cheapest data egress to common destinations; lowest latency to US user base; most service availability). All region-aware resources (VPC, ECS, ALB, S3, Route53 records, ECR, SSM, CloudWatch, regional ACM cert) deploy to this region.
+
+**One hardcoded exception**: the CloudFront ACM cert *must* be in `us-east-1` (CloudFront constraint). The Tofu root module declares a second AWS provider alias `aws.us_east_1` used only for that cert. Users who pick `var.aws_region = "us-east-1"` end up with one provider; users who pick anything else get two providers wired automatically. No user-visible config needed beyond setting `var.aws_region`.
+
+S3 bucket names include the region in their suffix to avoid collisions if a user deploys the same boilerplate in multiple regions (`<project>-<env>-<region>-marketing`).
 
 ### Domain conventions
 
@@ -414,14 +422,18 @@ Staging is meant to be persistent (not torn down between deploys) but can be des
 - Internationalization (single-locale baseline; i18n is a future variant).
 - Mobile apps (web-first; React Native is a future variant).
 - Real-time (WebSockets / SSE) beyond basic patterns.
-- Payment integration (Stripe wiring is a future variant; out-of-the-box would require too many assumptions about pricing models).
+- **Payment integration**: Stripe is the recommended provider — battle-tested, best-in-class DX, supports every billing model users are likely to need. Boilerplate does **not** bundle a billing implementation because pricing strategies vary too widely (flat subscription, tiered subscription, usage-based metering, seat-based, hybrid, free tier + paid plans, one-time payments, marketplaces). Each requires materially different data models, webhook handlers, and reconciliation logic. The boilerplate ships:
+  - `.env.example` entries for `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` (commented out)
+  - `docs/integrations/stripe.md` — a guide covering webhook setup, idempotency patterns, common pitfalls, and links to Stripe's official Node SDK docs
+  - A `packages/shared/zod/stripe-events.ts` stub of Zod schemas for common webhook event shapes (users opt in to what they need)
+  - No actual subscription/usage/checkout code — users build the billing model that matches their product.
 - Search beyond Postgres `ILIKE` / FTS (Algolia / Meilisearch are future swap guides).
 - Feature flags (out of scope; recommend GrowthBook or Unleash via env config).
 - Multi-region deploys.
 
 ## 16. Open questions / future work
 
-- Whether to ship a starter Stripe + Resend webhook handler pair as an *optional* example.
+- Whether to ship a *minimal* Stripe webhook handler example (signature verification + idempotency + dispatch table) without any specific billing model — that's a useful pattern regardless of subscription/usage/etc. Leaning yes.
 - Whether `packages/api-client/` checked-in generated files should also be checked in for non-`main` branches.
 - Whether to provide a Docker-Compose-only "no AWS" path with documented Fly.io / Render alternatives as first-class.
 - Renovate config: how aggressive on automerge for patch updates? (Default: patch automerges with CI pass; minor and major require human review.)
