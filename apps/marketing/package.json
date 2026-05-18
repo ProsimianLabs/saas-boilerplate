@@ -1,0 +1,31 @@
+{
+  "name": "@saas/marketing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "lint": "eslint .",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/check": "0.9.4",
+    "@astrojs/react": "4.2.0",
+    "@astrojs/tailwind": "5.1.4",
+    "@saas/shared": "workspace:*",
+    "@saas/ui": "workspace:*",
+    "astro": "5.1.5",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "tailwindcss": "4.1.4",
+    "vanilla-cookieconsent": "3.1.0"
+  },
+  "devDependencies": {
+    "@saas/config": "workspace:*",
+    "@types/react": "19.0.5",
+    "@types/react-dom": "19.0.2",
+    "typescript": "5.7.2"
+  }
+}
