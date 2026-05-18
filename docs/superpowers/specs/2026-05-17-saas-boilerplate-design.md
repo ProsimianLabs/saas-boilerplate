@@ -574,14 +574,46 @@ Implementation: a reusable `notify-slack` composite action in `.github/actions/n
 - Feature flags (out of scope; recommend GrowthBook or Unleash via env config).
 - Multi-region deploys.
 
-## 16. Open questions / future work
+## 16. Recommended companion tooling (not bundled)
+
+These are third-party services we recommend wiring up to a production SaaS but **do not install or pre-configure** in the boilerplate. Each comes with opinionated trade-offs (vendor lock-in, pricing, account setup) that are better left to the user. `docs/integrations/` ships a short setup guide for each.
+
+| Tool | Purpose | Where it plugs in | Why not bundled |
+|---|---|---|---|
+| **Stripe** | Billing | API webhook handler, frontend checkout, customer portal | Billing models vary too widely (see §15). |
+| **Cal.com** | Scheduling / booking | Embed widget on marketing site or app; webhook to API for booking events | Account-specific; users may prefer Calendly, SavvyCal, hosted vs self-hosted Cal.com. |
+| **Google Analytics** (GA4) | Web analytics | Script tag in `apps/marketing/` and `apps/web/`; env var `VITE_PUBLIC_GA_MEASUREMENT_ID` and Astro equivalent | Privacy stance varies (GDPR, cookie consent banner requirements); some users prefer Plausible, Fathom, Umami. |
+| **Google Search Console** | SEO indexing + crawl monitoring | DNS TXT verification (via Tofu) or HTML meta tag; sitemap submission from `apps/marketing/` | Verification is per-domain, not portable; sitemap content depends on user's marketing site. |
+| **Intercom** | Customer support chat | JS snippet in `apps/web/` (auth'd users) and `apps/marketing/` (anon); user identification via Intercom JS API with `apps/api/` providing the user attributes | Vendor lock-in + cost; many users prefer Crisp, Chatwoot, Plain, or Zendesk. |
+| **Sentry** | Error monitoring / crash reporting | `@sentry/node` SDK in `apps/api/` + `apps/workers/`; `@sentry/react` in `apps/web/`; source map upload in CI | Source-available (FSL) for server, MIT for SDKs (see §15 license trade-offs). Some users prefer Honeycomb, Datadog, or self-hosted GlitchTip. |
+
+### What ships now per tool
+For each tool: a `docs/integrations/<tool>.md` setup guide describing:
+- Where to obtain the credential (account creation steps)
+- Exact env var name expected by the boilerplate code (commented in `.env.example`)
+- Code snippet for where to add the script tag / SDK initialization / webhook handler
+- Common gotchas (e.g., GA4 cookie consent requirements, Sentry source-map upload in CI)
+- Cost shape and free tier limits
+
+### Sentry-specific notes
+The recommended pattern is:
+- `@sentry/node` + `@sentry/profiling-node` for `apps/api/` and `apps/workers/`.
+- Integrate with the existing OTel setup — Sentry's OTel integration means traces/spans flow to both Sentry (errors) and your existing collector (full observability) without duplication.
+- Source maps uploaded in CI via `@sentry/cli` after the Vite/Astro build, before image push.
+- DSN as env var; release ID as the git SHA (matches the deployed artifact, makes error tracebacks click through to source).
+
+### Cal.com-specific notes
+- For a hosted Cal.com setup, the embed snippet is a one-liner. For self-hosted Cal.com on your own infra, that's a separate Tofu story (RDS-backed, separate ECS service) — out of scope here.
+- Webhook events (BOOKING_CREATED, RESCHEDULED, CANCELLED, NO_SHOW) flow into `apps/api/src/routes/webhooks-cal.ts` (stub provided); we ship Zod schemas for the payload shapes.
+
+## 17. Open questions / future work
 
 - Whether to ship a *minimal* Stripe webhook handler example (signature verification + idempotency + dispatch table) without any specific billing model — that's a useful pattern regardless of subscription/usage/etc. Leaning yes.
 - Whether `packages/api-client/` checked-in generated files should also be checked in for non-`main` branches.
 - Whether to provide a Docker-Compose-only "no AWS" path with documented Fly.io / Render alternatives as first-class.
 - Renovate config: how aggressive on automerge for patch updates? (Default: patch automerges with CI pass; minor and major require human review.)
 
-## 17. Concrete library/version pins
+## 18. Concrete library/version pins
 
 These are the pinned versions as of design date (Renovate will track updates):
 
