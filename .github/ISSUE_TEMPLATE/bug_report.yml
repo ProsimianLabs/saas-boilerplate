@@ -1,0 +1,22 @@
+name: Bug report
+description: Something in the boilerplate doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the bug
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+    validations: { required: true }
+  - type: input
+    attributes:
+      label: Boilerplate version (commit SHA or tag)
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Phase
+      options: [Phase 1 (docs+structure), Phase 2 (working skeleton), Phase 3 (reference features)]
+    validations: { required: true }

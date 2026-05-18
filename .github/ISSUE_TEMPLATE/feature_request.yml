@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest a change to the boilerplate
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: What should the boilerplate add or change?
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Why is this valuable? Who needs it?
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Does this belong in DEFERRED.md or in the boilerplate?
+      options: [In the boilerplate, In DEFERRED.md (recommended companion tooling), Not sure]
+    validations: { required: true }

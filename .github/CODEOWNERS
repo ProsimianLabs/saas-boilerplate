@@ -1,0 +1,6 @@
+# Default owner for everything
+*       @SikandAlex
+
+# Infra changes go through extra review (when team grows; solo for now)
+/infra/  @SikandAlex
+/.github/ @SikandAlex
