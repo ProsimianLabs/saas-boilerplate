@@ -1,0 +1,12 @@
+// PHASE 2: rename to main.tsx and wire providers
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+// import { RouterProvider } from '@tanstack/react-router';
+// import { QueryClientProvider } from '@tanstack/react-query';
+// import { router, queryClient } from './lib';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <div>Phase 2 placeholder</div>
+  </StrictMode>,
+);

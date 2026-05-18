@@ -1,0 +1,42 @@
+{
+  "name": "@saas/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "3.10.0",
+    "@saas/api-client": "workspace:*",
+    "@saas/shared": "workspace:*",
+    "@saas/ui": "workspace:*",
+    "@tanstack/react-query": "5.62.10",
+    "@tanstack/react-router": "1.95.0",
+    "better-auth": "1.2.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-hook-form": "7.54.2",
+    "tailwindcss": "4.1.4",
+    "vanilla-cookieconsent": "3.1.0",
+    "zod": "4.0.0"
+  },
+  "devDependencies": {
+    "@saas/config": "workspace:*",
+    "@tanstack/router-plugin": "1.95.0",
+    "@types/react": "19.0.5",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "typescript": "5.7.2",
+    "vite": "8.0.0",
+    "vite-plugin-svgr": "4.3.0",
+    "vitest": "3.0.0"
+  }
+}
