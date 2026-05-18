@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" width="200" height="40" fill="currentColor">
+  <rect x="0" y="8" width="24" height="24" rx="6"/>
+  <text x="36" y="27" font-family="system-ui, sans-serif" font-size="20" font-weight="600">
+    Acme SaaS
+  </text>
+</svg>
