@@ -55,6 +55,25 @@ We strongly recommend using the **[Superpowers Claude Code plugin](https://githu
 
 **Why we recommend it:** This boilerplate has a lot of moving pieces (monorepo, RLS, codegen pipelines, multi-environment IaC). The kinds of mistakes that compound here — missing an RLS policy, forgetting to regenerate the API client, skipping a Tofu workspace — are exactly what Superpowers' verification and TDD workflows are designed to catch. Using it isn't required, but the boilerplate was designed expecting users will have something like it in their toolkit.
 
+## Claude skill: legal-doc generator
+
+**Status:** Planned. Will ship as a separate Claude Code skill, recommended (but not required) for boilerplate users.
+
+**What it will do:** A skill that combines two inputs to produce jurisdiction-appropriate Privacy Policy and Terms of Service drafts:
+
+1. **Codebase scan** — reads `prisma/schema.prisma`, `packages/shared/zod/`, integration env vars, and `apps/api/src/routes/` to infer what personal data the app collects, what third-party processors it uses (Stripe, Sentry, Intercom, GA, etc.), and what user rights need to be supported (export, delete, opt-out).
+2. **Jurisdiction selection** — user states where they operate (US states, EU/UK, Canada, Australia, etc.) and the skill applies the right legal regime layering: GDPR + UK GDPR + CPRA + state-level US laws + PIPEDA + APP, etc.
+
+**Output:**
+- `apps/marketing/src/pages/privacy.astro` — Privacy Policy, populated with actual data inventory and processor list pulled from the codebase
+- `apps/marketing/src/pages/terms.astro` — Terms of Service template, customized for SaaS context
+- `apps/marketing/src/pages/do-not-sell-or-share.astro` — CPRA opt-out flow (if California is in scope)
+- `docs/legal/data-inventory.md` — machine-readable summary of what data goes where (also useful for SOC 2 / GDPR DPIA)
+
+**Hard caveat baked into the skill itself:** AI-generated legal documents are not a substitute for legal review. The skill emits a banner at the top of each page reminding the user to have a lawyer review before going live. For B2C apps, especially in regulated industries (health, finance, kids), professional review is non-negotiable.
+
+**Why this lives in a skill, not the boilerplate:** legal docs change as data collection changes. A skill can re-run after every meaningful schema change and diff the output, keeping policies current. Static templates rot.
+
 ## Other future work (unscheduled)
 
 - **Stripe webhook idempotency example** (see above).

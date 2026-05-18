@@ -93,6 +93,31 @@ All problem-type schemas are themselves Zod schemas, registered with the OpenAPI
 ### Auth
 BetterAuth handles sessions, OAuth flows, email/password. Direct integration — **not** wrapped by Neon Auth (which is beta and adds vendor coupling). If a user wants Neon Auth specifically, swap guide in `docs/swap-guides/neon-auth.md`.
 
+**Marketing email consent on user signup** (CAN-SPAM / CASL / GDPR compliance):
+
+The `User` model extends BetterAuth's base user with three consent fields:
+
+```prisma
+model User {
+  // ...BetterAuth fields...
+  marketingEmailConsent           Boolean   @default(false)  // opt-in, NEVER pre-checked
+  marketingEmailConsentedAt       DateTime?                  // when they consented
+  marketingEmailConsentSource     String?                    // e.g. "signup_v2", "settings_2026-05-17" - proves what they agreed to
+  ccpaOptOut                      Boolean   @default(false)  // CPRA: user opted out of sale/share
+  ccpaOptOutAt                    DateTime?
+  consentSnapshot                 Json?                      // cookie consent state at signup (audit trail)
+}
+```
+
+**Signup form** ships with a marketing-consent checkbox, **unchecked by default** (the safer choice across jurisdictions — GDPR requires opt-in; CAN-SPAM allows opt-out but unchecked-by-default is fine; CASL requires opt-in). The label is a real sentence, not legalese: *"I'd like to receive product updates and occasional emails. You can unsubscribe anytime."*
+
+**Email sending split**:
+- **Transactional emails** (password reset, invoices, magic links, security alerts, invitations, billing failures) — ALWAYS allowed; no consent required by law because they're tied to active service.
+- **Marketing emails** (newsletters, product announcements, feature emails, win-back, drip campaigns) — gated by `marketingEmailConsent === true`. A helper in `packages/shared/email.ts` enforces this — `sendMarketingEmail(userId, ...)` no-ops with a log warning if consent is false. Hard to get wrong.
+- **Per-email-type granular preferences** (newsletter vs product updates vs marketing) — deferred; current model is binary opt-in. Easy to extend later by adding fields or a separate `EmailPreference` table.
+
+Unsubscribe link in every marketing email points to `app.<domain>/settings/email-preferences`, which writes `marketingEmailConsent = false`. One-click unsubscribe (RFC 8058 `List-Unsubscribe` header) supported via Resend.
+
 ### Multi-tenancy
 
 BetterAuth's [organization plugin](https://better-auth.com/docs/plugins/organization) enabled by default. Provides `organization`, `member`, `invitation`, `team`, `organizationRole` tables and roles (owner/admin/member, extensible). Session carries `activeOrganizationId` and `activeTeamId`.
@@ -218,6 +243,44 @@ Static output (`output: 'static'`). Deployed to either:
 - Islands let you keep dynamic React components (forms, animated heroes, Magic UI) where needed without the rest of the page paying for them.
 - Decouples marketing from app; marketing changes don't touch the React SPA.
 - Avoids Next.js → Vercel framework gravity.
+
+### Cookie consent: `orestbida/cookieconsent` (bundled)
+
+Production SaaS that loads GA/Intercom/anything-non-essential needs a consent banner for EU/UK traffic and an opt-out path for California (CPRA). The boilerplate bundles **[orestbida/cookieconsent](https://github.com/orestbida/cookieconsent)** — vanilla JS, MIT-licensed, 5.5k stars, actively maintained (v3.1.0 Feb 2025). Chosen over Osano (abandoned since 2019), Klaro (smaller community), and any paid SaaS (vendor lock-in, ongoing cost).
+
+**How it's wired:**
+- Configuration lives in `packages/shared/consent/` so the same banner config is consumed by `apps/marketing/` (via Astro `<script>`) and `apps/web/` (via React `useEffect` on mount).
+- Categories: `necessary` (always on), `analytics` (GA), `functional` (Intercom session), `marketing` (Intercom outbound, ad pixels if added).
+- Each integration's loader checks the relevant category before initializing. If the user denies `analytics`, GA never loads. No "load then disable" workarounds.
+- Respects `Sec-GPC: 1` (Global Privacy Control) signal — auto-opt-out for users sending it, no banner shown beyond a brief notice.
+- Cookie set client-side; consent state synced to the user record (`user.consentSnapshot`) on signup so you have a server-side audit trail for compliance.
+
+### Legal pages on the marketing site (required, not optional)
+
+The marketing site **must** host these pages before going live. The boilerplate ships placeholder content with `TODO` headers — the content itself is jurisdiction-specific and must be written by you (or a lawyer, or a generator — see DEFERRED.md for the planned Claude skill).
+
+| Path | What it is | Why required |
+|---|---|---|
+| `/privacy` | Privacy Policy | GDPR (Art. 13/14), CCPA/CPRA, COPPA, PIPEDA, and basically every data-protection law on Earth. Without one, you're non-compliant the moment you collect an email address. |
+| `/terms` | Terms of Service | Contractual basis for the user-product relationship. Limits liability, defines acceptable use, sets dispute resolution. No ToS = you have no enforceable agreement with users. |
+| `/do-not-sell-or-share` | "Do Not Sell or Share My Personal Information" opt-out page | Required by CPRA (California, in effect since 2023). Must be a clearly-labeled link in the footer; opt-out form for anonymous users (cookie-based) and authenticated users (writes `user.ccpaOptOut = true`). |
+| `/cookie-policy` (optional but common) | Cookie inventory + purposes | Required by ePrivacy in some EU member states; documents what each cookie category does. |
+
+**Footer links** appear on every page of the marketing site and every page of the web app (signup, signin, settings, etc.). The web app links *back* to the marketing site URLs (`<domain>/privacy`, not `app.<domain>/privacy`) — single source of truth, no doc drift.
+
+**This is not legal advice** — every SaaS founder should at minimum read a generated policy carefully or pay a lawyer. The placeholder pages flag this prominently.
+
+### Logo guidance: use SVG
+
+Place the company logo at `packages/ui/assets/logo.svg` (full color), with optional `logo-mark.svg` (icon only) and `logo-mono.svg` (monochrome). Reasons SVG matters:
+
+- **Scales infinitely** — looks crisp on retina, 4K, print, favicon. PNG/JPG need multiple sizes.
+- **Smaller** — typical logo is 2–8KB SVG vs. 20–100KB PNG with retina variants.
+- **Themeable** — CSS `currentColor` and CSS variables let you swap colors per theme (dark mode, hero contrast) without exporting new files.
+- **Crawlable** — search engines and accessibility tools read SVG paths better than rastered text.
+- **One source** — marketing site, web app, favicons, OG images, emails all reference the same file.
+
+Used by both `apps/marketing/` and `apps/web/` via the shared `packages/ui/` package. Tools like `vite-plugin-svgr` (web app) and Astro's native SVG support (marketing) import the SVG as a React component or inline element for theming.
 
 ## 8. Shared packages
 
