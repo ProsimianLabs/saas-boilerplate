@@ -8,7 +8,7 @@
 
 A public, open-source (MIT) SaaS starter monorepo for 2026. Opinionated single-happy-path per slot with documented escape hatches. Owns one technical choice in each category; users who want different fork or follow swap guides in `docs/swap-guides/`. Branded as **"Express + Prisma + Vite/React + Astro, deploy anywhere, AWS optional."**
 
-Primary audience: solo founders, small teams, agencies starting new SaaS projects. Secondary audience: the author's own future projects. Not aimed at enterprise/multi-region/multi-tenant from day one (those are future variant work).
+Primary audience: solo founders, small teams, agencies starting new SaaS projects. Secondary audience: the author's own future projects. Multi-tenancy (organizations/teams) is built in via BetterAuth's organization plugin; enterprise concerns like multi-region deploy are future variant work.
 
 ## 2. Design principles
 
@@ -93,6 +93,41 @@ All problem-type schemas are themselves Zod schemas, registered with the OpenAPI
 ### Auth
 BetterAuth handles sessions, OAuth flows, email/password. Direct integration — **not** wrapped by Neon Auth (which is beta and adds vendor coupling). If a user wants Neon Auth specifically, swap guide in `docs/swap-guides/neon-auth.md`.
 
+### Multi-tenancy
+BetterAuth's [organization plugin](https://better-auth.com/docs/plugins/organization) enabled by default. Provides `organization`, `member`, `invitation`, `team`, `organizationRole` tables and roles (owner/admin/member, extensible). Session carries `activeOrganizationId` and `activeTeamId`.
+
+**Critical**: the plugin manages membership and roles but does NOT auto-scope your application data. The boilerplate adds four pieces on top:
+
+1. **`organizationId` on every domain table.** Migration template + Prisma model template; convention enforced via an ESLint rule (`require-organization-id-on-models`) in `packages/config/`.
+
+2. **AsyncLocalStorage middleware in `apps/api/`** reads `req.session.activeOrganizationId` per request, stores it in an ALS context for the lifetime of the request.
+
+3. **Scoped Prisma client in `packages/shared/db.ts`** (~50 lines, users own it):
+   ```ts
+   export const scopedPrisma = prisma.$extends({
+     query: {
+       $allModels: {
+         async $allOperations({ model, operation, args, query }) {
+           const orgId = orgContext.getStore();  // from ALS
+           if (orgId && SCOPED_MODELS.has(model)) {
+             args.where = { ...args.where, organizationId: orgId };
+           }
+           return query(args);
+         },
+       },
+     },
+   });
+   ```
+   Handlers import `scopedPrisma` and don't think about org scoping. The set of `SCOPED_MODELS` is explicit; opt-in per model.
+
+4. **Escape hatch**: `getUnscopedPrisma()` for admin endpoints / cross-org operations. Marked dangerous; gated by a role check + audit log.
+
+**Workers** include `organizationId` in every job payload (validated via Zod). The worker sets ALS context before processing each job, so `scopedPrisma` works the same way as in API handlers.
+
+**Frontend** (`apps/web/`) provides `useActiveOrg()` hook backed by BetterAuth session, plus an org switcher in the layout (calls `organization.setActive(orgId)`).
+
+**Invitation email**: implemented via Resend, template in `packages/shared/email-templates/`.
+
 ## 5. Workers — `apps/workers/`
 
 ### Stack
@@ -114,7 +149,7 @@ BetterAuth handles sessions, OAuth flows, email/password. Direct integration —
 - **Vite 8 + React 19 + TypeScript** (all pinned).
 - **shadcn/ui + Tailwind v4** for components and styling.
 - **Magic UI** for animated marketing-style components (vendored alongside shadcn in `packages/ui/`).
-- **TanStack Router** for file-based routing with type-safe params (better TS story than React Router 7 for new projects).
+- **TanStack Router** for file-based routing — chosen over React Router 7 for fully type-safe path *and* search params (Zod-validated per route), compile-time error on bad `<Link>` paths, and tighter integration with TanStack Query. React Router 7 swap guide for users migrating from existing RR apps.
 - **TanStack Query** via the hey-api generated client.
 - **react-hook-form + @hookform/resolvers/zod** for forms (Zod schemas reused from `packages/shared/`).
 - **`@hey-api/openapi-ts`** (with TanStack Query plugin) consumes `packages/api-client/openapi.json` at build time and emits typed fetch client + React Query hooks.
@@ -252,24 +287,56 @@ Turbo runs:
 | `registry` | ECR repository per app. |
 | `secrets` | **SSM Parameter Store** SecureString parameters per env (NOT Secrets Manager — free for our scale, all secrets are static third-party keys, no rotation needed). |
 | `logs` | CloudWatch log groups + retention + alarms. |
-| `marketing` | S3 bucket + CloudFront distribution + Route53 record for static Astro build. |
+| `marketing` | S3 bucket + CloudFront distribution + Route53 record for static Astro build (served at apex domain). |
+| `web` | S3 bucket + CloudFront distribution + Route53 record for static Vite SPA build (served at `app.<domain>` / `staging.app.<domain>`). |
+| `acm` | ACM certs: one in `us-east-1` for CloudFront (apex + `app.*` + `staging.app.*`), one in deploy region for ALB (`api.*` + `staging.api.*`). Default uses wildcard `*.<domain>` + `<domain>` to cover everything. |
 
 ### What's NOT included
 - **No RDS** (use Neon for managed Postgres)
 - **No ElastiCache** (use Upstash for managed Redis)
-- **No NAT Gateway** (no private subnets needed; ECS in public subnets with security groups + outbound-only IGW route)
+- **No NAT Gateway**. Rationale: NAT exists to let *private-subnet* resources reach the internet. We use public subnets with tight security groups instead — ECS tasks only allow inbound from the ALB security group, outbound goes directly via IGW. Trade-off: less defense-in-depth than canonical AWS architecture (SG is the only barrier); cost of public IPv4 (~$3.65/mo per task, ~$14/mo total) versus ~$65/mo for HA NAT Gateways. Users who need stricter network isolation: see `docs/swap-guides/aws-with-nat-gateway.md`.
 - **No CDK / Pulumi** (OpenTofu only; alternatives in swap guides as text only)
 - **No Multi-AZ DB / cross-region replication** (managed by Neon/Upstash; users with those needs override `tofu` variables)
+
+### Domain conventions
+
+| URL | Resource | Workspace |
+|---|---|---|
+| `<YOUR-DOMAIN>` | Marketing site (Astro/CloudFront) | production only |
+| `app.<YOUR-DOMAIN>` | Web app SPA (Vite/CloudFront) | production |
+| `api.<YOUR-DOMAIN>` | API (Express/ALB) | production |
+| `staging.app.<YOUR-DOMAIN>` | Staging web app | staging |
+| `staging.api.<YOUR-DOMAIN>` | Staging API | staging |
+
+(`staging.<YOUR-DOMAIN>` for marketing is intentionally not created — marketing changes ship to production via PR review, no staging variant needed. Override with a tfvar if you want one.)
+
+**Tofu variable wiring**: `var.domain_name` (e.g. `"mysaas.com"`) and `var.env_prefix` (`""` for production, `"staging."` for staging). DNS module constructs hostnames as `"${var.env_prefix}app.${var.domain_name}"`.
 
 ### Workspaces
 - `staging` and `production` workspaces, same modules, different `.tfvars`.
 - Staging: 1 Fargate task per service, smaller compute.
 - Production: 2+ Fargate tasks per service, larger compute, alarms wired.
 
+### Deployment workflow (documented in `docs/operations/launch.md`)
+
+The intended adoption arc for a boilerplate user:
+
+1. Clone, run `pnpm dev` against `docker compose up`. Verify locally.
+2. Buy domain. Create Route53 hosted zone. Point registrar nameservers at Route53.
+3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys.
+4. Set values in `infra/tofu/staging.tfvars` (domain, secrets, AWS region, account id).
+5. `tofu workspace select staging && tofu init && tofu apply` → staging stack stands up at `staging.app.*` and `staging.api.*`. ~10 minutes first time.
+6. Build images via CI (or local `pnpm build:docker`), push to ECR, ECS pulls and rolls.
+7. Smoke-test, run E2E, soak as long as you want.
+8. **When ready to launch**: set `production.tfvars`, `tofu workspace select production && tofu apply`. Same modules, production hostnames + sizing. Apex marketing domain comes up at the same time.
+
+Staging is meant to be persistent (not torn down between deploys) but can be destroyed for cost reasons during long quiet periods (`tofu destroy` then `tofu apply` later).
+
 ### Expected cost
-- **Staging**: ~$60/month (ALB ~$20, Fargate ~$25, logs/SSM/ECR/S3/CF ~$15)
-- **Production**: ~$130/month (ALB ~$25, Fargate ~$60, logs/SSM/ECR/S3/CF ~$25, data transfer ~$20)
+- **Staging**: ~$60/month — ALB ~$20, Fargate ~$25, public IPv4 ~$7 (2 tasks), logs/SSM/ECR/S3/CF ~$10. SSM Parameter Store free at this scale.
+- **Production**: ~$140/month — ALB ~$25, Fargate ~$60, public IPv4 ~$15 (4 tasks across api+workers), logs/SSM/ECR/S3/CF ~$25, data transfer ~$15.
 - **Plus** Neon, Upstash, Resend bills (vary by usage; ~$0–50/month each for early-stage).
+- **Combined**: ~$200/month total infrastructure (both envs) before usage-based managed-service bills.
 
 ### Swap guides for IaC
 - `docs/swap-guides/aws-ecs-express-mode.md` — drop OpenTofu entirely, use ECS Express Mode CLI for cheaper getting-started.
@@ -293,7 +360,7 @@ Turbo runs:
 ## 14. Documentation
 
 - **`README.md`** — quickstart (clone → setup → `pnpm dev` in 5 minutes), architecture diagram, links into docs.
-- **`docs/operations/`** — secrets management, scaling guidance, observability setup, on-call runbook template.
+- **`docs/operations/`** — secrets management, scaling guidance, observability setup, on-call runbook template, **`launch.md`** (staging-first → production deployment workflow).
 - **`docs/swap-guides/`** — alternatives for each opinionated choice:
   - `marketing-nextjs.md`, `marketing-vite.md`
   - `redis-elasticache.md`, `redis-self-hosted.md`
@@ -306,7 +373,6 @@ Turbo runs:
 
 ## 15. Out of scope (intentionally)
 
-- Multi-tenancy (single-tenant assumption; users add row-level scoping themselves).
 - Internationalization (single-locale baseline; i18n is a future variant).
 - Mobile apps (web-first; React Native is a future variant).
 - Real-time (WebSockets / SSE) beyond basic patterns.
