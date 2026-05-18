@@ -311,6 +311,64 @@ Turbo runs:
 - OTel metrics pipeline ships to the same collector.
 - Default service-level indicators: request rate, error rate, duration p50/p95/p99.
 
+### Alerts (CloudWatch + Slack + AWS Budgets)
+
+Architectural pattern (proven in production):
+
+```
+AWS source (CloudWatch alarm / AWS Budget) → SNS topic → Lambda forwarder → Slack webhook
+                                                       ↘ Email (fallback subscriber)
+```
+
+The Lambda exists because SNS → Slack natively produces ugly text-only messages. The Lambda parses SNS payloads (different shape per source type), formats Block Kit messages with severity colors, and posts to the webhook URL stored in SSM SecureString.
+
+**Slack channels** (configurable; defaults shown):
+- `#deploys` — CI/CD events (success/failure/rollback)
+- `#alerts` — CloudWatch alarms (API errors, latency, ECS task health, DLQ depth) + AWS Budget alerts
+- `#app-events` — application-level notifications (new signups, churn risk, etc. — opt-in per event)
+
+**Webhook URL storage**: each Slack webhook URL is an SSM SecureString parameter (`/<project>/<env>/slack/<channel>-webhook`). Lambda forwarder reads with KMS decryption. App code reads via the `apps/api/` config loader.
+
+**Lambda forwarder** is a single `~150-line` Node.js Lambda included in `infra/tofu/alerts/lambda/slack-forwarder/`. Handles AWS Budgets, CloudWatch Alarms, and custom SNS payloads with the same code path. Pattern lifted from a production setup (callsaver). Source is in the repo, not a vendored package — users own it.
+
+**CloudWatch alarms shipped by default** (per environment):
+| Alarm | Threshold | Severity |
+|---|---|---|
+| API 5xx rate | > 1% over 5min | Critical |
+| API p99 latency | > 2000ms over 5min | Warning |
+| ECS task unhealthy | any service `runningCount < desiredCount` for 5min | Critical |
+| ALB unhealthy targets | > 0 for 5min | Critical |
+| BullMQ DLQ depth | > 100 jobs | Warning |
+| Worker task crashes | > 3 in 10min | Warning |
+| Log error rate | > 50/min sustained | Warning |
+
+Each alarm publishes to the `#alerts` SNS topic.
+
+**AWS Budgets** (per AWS account, not per env):
+| Threshold | Type | Severity |
+|---|---|---|
+| 50% of monthly limit | ACTUAL | Info |
+| 85% | ACTUAL | Warning |
+| 100% | ACTUAL | Critical |
+| 150% | ACTUAL | Critical |
+| 200% | ACTUAL | Critical |
+| 100% | FORECASTED | Warning |
+
+Default monthly budget: `var.monthly_budget_usd = 300` (covers ~$200 infra + 3rd party cushion). Configurable. Email fallback subscribers ensure alerts arrive even if Slack pipeline breaks.
+
+**Application-level Slack notifications** (`packages/shared/slack.ts`):
+- Fire-and-forget pattern: never blocks the request path; failures logged but don't propagate.
+- Block Kit formatting helpers: `header()`, `fields()`, `text()`, `context()`.
+- Per-event functions live in `apps/api/src/services/notifications/` — keeps the channel config close to the call site.
+- Webhook URL via env var (`SLACK_WEBHOOK_APP_EVENTS_URL`); skip if unset (works in dev without a webhook).
+- Pattern lifted from a production setup (callsaver `slack-notifications.ts`).
+
+**Why SNS in the middle** (not direct CloudWatch→Lambda or Budget→Lambda):
+- AWS Budgets can ONLY publish to SNS or email — not Lambda directly.
+- CloudWatch alarm targets are EventBridge or SNS — SNS is simpler.
+- SNS gives you email fallback for free (subscribe an email + the Lambda to the same topic).
+- One Lambda handles all alert sources via SNS, simplifies maintenance.
+
 ## 12. Deployment — AWS via OpenTofu
 
 ### Modules in `infra/tofu/`
@@ -324,7 +382,8 @@ Turbo runs:
 | `dns` | Route53 hosted zone records. |
 | `registry` | ECR repository per app. |
 | `secrets` | **SSM Parameter Store** SecureString parameters per env (NOT Secrets Manager — free for our scale, all secrets are static third-party keys, no rotation needed). |
-| `logs` | CloudWatch log groups + retention + alarms. |
+| `logs` | CloudWatch log groups + retention + log-based metric filters. |
+| `alerts` | SNS topic per env + Lambda Slack forwarder + CloudWatch alarms (5xx rate, p99 latency, ECS health, ALB unhealthy, DLQ depth, worker crashes) + AWS Budget with multi-threshold notifications. Slack webhooks read from SSM SecureString. |
 | `marketing` | S3 bucket + CloudFront distribution + Route53 record for static Astro build (served at apex domain). |
 | `web` | S3 bucket + CloudFront distribution + Route53 record for static Vite SPA build (served at `app.<domain>` / `staging.app.<domain>`). |
 | `acm` | ACM certs: one in **`us-east-1`** for CloudFront (apex + `app.*` + `staging.app.*`) — this region is **required** by CloudFront, not configurable. Plus one in the user's chosen deploy region for ALB (`api.*` + `staging.api.*`). Default uses wildcard `*.<domain>` + `<domain>` to cover everything. Implemented via a second AWS provider alias `aws.us_east_1` in the Tofu root module. |
@@ -370,7 +429,7 @@ The intended adoption arc for a boilerplate user:
 1. Clone, run `pnpm dev` against `docker compose up`. Verify locally.
 2. Buy domain. Create Route53 hosted zone. Point registrar nameservers at Route53.
 3. Provision Neon (free tier), Upstash (free tier), Resend account. Capture connection strings + API keys. **Region**: pick Neon and Upstash regions that match your `var.aws_region` — every API request makes at least one DB round-trip, and a cross-region hop adds 60–100ms per query. Neon supports several AWS regions directly; Upstash similar. On Neon: run the bundled `prisma/init.sql` once per environment to create the two RLS roles (`app_user`, `app_admin`); set `DATABASE_URL` to the `app_user` connection string and `DATABASE_URL_ADMIN` to the `app_admin` one. **Credential discipline**: staging *must* use test/sandbox credentials for every third-party service that distinguishes them — Stripe sandbox keys, Resend sandbox/dev mode, OAuth provider dev apps, etc. Live credentials only ever appear in `production.tfvars`. The `.env.example` files document which keys have a test variant and where to obtain it.
-4. Set values in `infra/tofu/staging.tfvars` (domain, secrets, AWS region, account id).
+4. Set values in `infra/tofu/staging.tfvars` (domain, secrets, AWS region, account id). Create Slack webhooks for the channels you want (`#deploys`, `#alerts`, `#app-events`) — three separate Incoming Webhook URLs — and put them in SSM SecureString parameters (`/<project>/staging/slack/deploys-webhook`, etc.). The Tofu `alerts` module will reference these. Same for the production env in step 8.
 5. `tofu workspace select staging && tofu init && tofu apply` → staging stack stands up at `staging.app.*` and `staging.api.*`. ~10 minutes first time.
 6. Build images via CI (or local `pnpm build:docker`), push to ECR, ECS pulls and rolls.
 7. Smoke-test, run E2E, soak as long as you want.
@@ -391,17 +450,100 @@ Staging is meant to be persistent (not torn down between deploys) but can be des
 
 ## 13. CI/CD — GitHub Actions
 
+The boilerplate ships a complete CI/CD pipeline with the **same-artifact promotion** pattern (build once, promote the same image SHA from staging to production), automated staging deploys, manual production deploys with reviewer approval, and post-deploy verification with automatic rollback.
+
 ### Workflows in `.github/workflows/`
-- `ci.yml` — runs on PR: install, typecheck, lint, test (with Testcontainers), build all apps.
-- `deploy-staging.yml` — on merge to `main`: build images, push to ECR, `tofu apply` staging workspace.
-- `deploy-production.yml` — manual trigger (workflow_dispatch) with approval gate: same as staging but production workspace.
-- `e2e.yml` — nightly Playwright against staging.
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `ci.yml` | every PR + push to `main` | Validation only: install, generate Prisma client, generate OpenAPI spec, typecheck, lint, build, unit + integration tests (Vitest + Testcontainers), assert generated `api-client/` matches committed version. Required status check. |
+| `build-images.yml` | push to `main` (after `ci.yml` succeeds) | Build Docker images for `apps/api/` and `apps/workers/`, push to ECR tagged with git SHA + `latest-main`. No deploy yet — just produce the artifact. |
+| `deploy-staging.yml` | push to `main` (after `build-images.yml`), or `workflow_dispatch` | Promote the SHA to staging: Tofu apply → migrate DB (admin role) → update ECS task definition → wait for stable → health check loop → smoke tests → Slack notify. Auto on by default; toggle to manual via `var.staging_auto_deploy = false`. |
+| `deploy-production.yml` | `workflow_dispatch` only | Promote the SHA to production. **Gates** (see below). Same pipeline as staging but production workspace. |
+| `rollback.yml` | `workflow_dispatch` | Roll an environment back to the previously-deployed SHA (stored in SSM). One-step revert. |
+| `e2e.yml` | nightly + on-demand | Playwright against staging. Failures Slack-notify and open a GitHub issue. |
+| `renovate.yml` | hourly | Trigger Renovate self-hosted or webhook the Renovate app. |
+
+### The promotion / same-artifact principle
+
+Industry standard for preventing "tested one thing, deployed another":
+
+```
+PR merged to main
+   ↓ ci.yml passes (typecheck, lint, test)
+   ↓ build-images.yml: build image tagged with git SHA, push to ECR
+   ↓ deploy-staging.yml: deploy that SHA to staging, smoke-test
+   ↓ (manual review, soak time)
+   ↓ deploy-production.yml: deploy THE SAME SHA to production
+```
+
+The production workflow does NOT rebuild the image. It pulls the same tag staging used. This guarantees the artifact running in prod is bit-for-bit identical to what was tested in staging — no rebuild drift, no "works on CI but not in prod."
+
+### Production-deploy gates
+
+`deploy-production.yml` refuses to run unless **all** of these are true:
+
+1. **The SHA was successfully deployed to staging.** Each successful staging deploy writes the SHA to SSM Parameter `/<project>/staging/last-deployed-sha`. The production workflow's first step queries that parameter and refuses if the input SHA isn't there.
+2. **The SHA has been in staging at least N hours** (configurable; default 1 hour soak). Same SSM lookup includes a deployed timestamp.
+3. **All required status checks pass on the SHA.** `ci.yml` must be green at that commit.
+4. **A reviewer has approved.** Uses GitHub Environments → "production" environment → required reviewers. Deploy is queued until reviewer approves in the GitHub UI.
+5. **No production deploy is already in progress.** GitHub Actions `concurrency: { group: deploy-production, cancel-in-progress: false }`.
+6. **Optional time-window restriction.** Default config allows production deploys Mon–Thu 09:00–16:00 local time (no Friday afternoons). Override via `--force-deploy` input.
+
+If you really want auto-deploy to production (small team, fast iteration, you trust your tests): flip `var.production_auto_deploy = true` and `deploy-production.yml` triggers automatically on successful staging deploy with the same gates except the manual review. Default ships as **manual-only** because the wrong production deploy is the most expensive mistake a SaaS makes.
+
+### Smoke tests + auto-rollback
+
+After every deploy:
+
+1. Wait for ECS service to stabilize (`aws ecs wait services-stable`).
+2. Health check loop: poll `<env>.api.<domain>/healthz` until HTTP 200, max 10 attempts × 5s.
+3. Run smoke test suite — a small set of critical endpoint hits stored in `apps/api/test/smoke/`. These run against the deployed env (not in-process).
+4. On smoke test failure: workflow calls `rollback.yml` automatically, reverting to the SSM-stored previous SHA. Slack-notify the failure with the diff URL.
+
+### Branch protection (configured per `.github/settings.yml` or manually)
+
+- `main` requires: PR review, signed commits (optional), all required status checks green, branch up-to-date, linear history.
+- Required checks: `ci.yml` complete success.
+- No direct pushes to `main`. No force-pushes.
+- Auto-delete merged branches.
 
 ### Image strategy
-- Multi-stage Dockerfile per app.
+
+- **Multi-stage Dockerfile** per app (`apps/api/Dockerfile`, `apps/workers/Dockerfile`, etc.).
 - Base: `node:22-alpine` (LTS).
-- Distroless final stage for `apps/api/` and `apps/workers/`.
-- Image tags: git SHA + branch.
+- Final stage: **distroless** (`gcr.io/distroless/nodejs22-debian12`) for `apps/api/` and `apps/workers/`. Smaller attack surface, no shell, faster cold starts.
+- **Tags**: git SHA (immutable, used for actual deploys) + `latest-main` (mutable, used as build cache source).
+- BuildKit + registry layer caching via `--cache-from type=registry,ref=:latest-main`.
+- ECR lifecycle policy: keep last 30 images per repo, untagged images expire in 7 days.
+
+### Migrations in CI
+
+Database migrations run as part of the deploy workflow, **before** the ECS service update:
+
+1. Workflow assumes the `app_admin` IAM role (has BYPASSRLS DB credentials in SSM).
+2. Fetches `DATABASE_URL_ADMIN` from SSM.
+3. Runs `pnpm prisma migrate deploy`.
+4. Runs `pnpm prisma migrate status` to verify no pending migrations.
+5. Only after migration success does the ECS service get updated.
+
+This means **app code never deploys against an un-migrated DB**. If migration fails, deploy halts; ECS keeps running the old image with the old schema (which is compatible). Migrations must be backwards-compatible with the previous app version (add columns nullable first, deprecate in a later release).
+
+### Deploy notifications (Slack)
+
+Every deploy workflow ends with a Slack notification to `#deploys` (channel name configurable via SSM):
+
+- ✅ green = successful deploy with SHA, env, deployer, link to the workflow run, link to the diff since previous deploy
+- ❌ red = failure with SHA, env, failure step, link to logs
+- 🔄 yellow = automatic rollback triggered, with the cause
+
+Implementation: a reusable `notify-slack` composite action in `.github/actions/notify-slack/` that posts a Block Kit message via webhook URL from a GitHub secret (`SLACK_WEBHOOK_DEPLOYS`).
+
+### Secrets in GitHub Actions
+
+- AWS access via **OIDC role assumption** (no long-lived `AWS_ACCESS_KEY_ID` in secrets). Each environment has its own IAM role; GitHub Actions assumes it via `aws-actions/configure-aws-credentials@v4` with `role-to-assume` from environment secrets.
+- Slack webhooks, third-party API keys for smoke tests: GitHub Environment secrets (scoped per env).
+- Production secrets are NEVER copied into staging or vice versa.
 
 ## 14. Documentation
 
