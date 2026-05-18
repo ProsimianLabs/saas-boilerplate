@@ -1,0 +1,57 @@
+# Local development stack.
+# `docker compose -f docker/compose.yaml up -d` starts Postgres, Redis, OTel collector, MailHog.
+# Used by `apps/api`, `apps/workers`, integration tests, and Phase 2's `pnpm dev`.
+
+name: saas-boilerplate-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: saas-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: saas
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: saas-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: saas-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Collector self-metrics
+
+  mailhog:
+    # Captures all outbound mail from local dev. Web UI at http://localhost:8025.
+    image: mailhog/mailhog:v1.0.1
+    container_name: saas-mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+
+volumes:
+  postgres-data:
